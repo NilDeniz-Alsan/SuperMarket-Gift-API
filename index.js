@@ -15,24 +15,25 @@ const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 // Shopify'dan gelen webhook'ları doğrulamak için middleware
 const verifyShopifyWebhook = (req, res, next) => {
   const hmac = req.get('X-Shopify-Hmac-Sha256');
-  let rawBody = '';
-  req.on('data', chunk => {
-    rawBody += chunk.toString();
-  });
-  req.on('end', () => {
-    const hash = crypto
-      .createHmac('sha256', SHOPIFY_API_SECRET)
-      .update(rawBody, 'utf8')
-      .digest('base64');
+  const rawBody = req.body; // Bu artık bir Buffer!
 
-    if (hash === hmac) {
-      req.body = JSON.parse(rawBody);
+  const hash = crypto
+    .createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(rawBody, 'utf8')
+    .digest('base64');
+
+  if (hash === hmac) {
+    try {
+      req.body = JSON.parse(rawBody.toString('utf8')); // JSON'ı burada parse ediyoruz
       next();
-    } else {
-      console.error('Webhook doğrulaması başarısız.');
-      res.status(401).send('Yetkisiz');
+    } catch (error) {
+      console.error('❌ JSON parse hatası:', error);
+      res.status(400).send('Bad Request');
     }
-  });
+  } else {
+    console.error('❌ Webhook doğrulaması başarısız.');
+    res.status(401).send('Unauthorized');
+  }
 };
 
 // Shopify'dan gelen /orders/paid webhook'unu karşılayan route
