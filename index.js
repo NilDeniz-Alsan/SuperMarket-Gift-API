@@ -10,32 +10,34 @@ const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_API_TOKEN;
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 
-// 🔐 Webhook doğrulama middleware
 const verifyShopifyWebhook = (req, res, next) => {
-  const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
-  const rawBody = req.body;
+  try {
+    const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+    const rawBody = req.rawBody || req.body; // Bazı sürümlerde farklı olabilir
 
-  if (!rawBody) {
-    console.error('❌ Webhook body boş.');
-    return res.status(400).send('Bad Request');
-  }
-
-  const generatedHmac = crypto
-    .createHmac('sha256', SHOPIFY_API_SECRET)
-    .update(rawBody)
-    .digest('base64');
-
-  if (generatedHmac === hmacHeader) {
-    try {
-      req.body = JSON.parse(rawBody.toString('utf8'));
-      return next();
-    } catch (err) {
-      console.error('❌ JSON parse hatası:', err);
-      return res.status(400).send('Bad JSON');
+    if (!rawBody) {
+      console.error('❌ Webhook body boş.');
+      return res.status(400).send('Bad Request');
     }
-  } else {
-    console.error('❌ Webhook doğrulaması başarısız.');
-    return res.status(401).send('Unauthorized');
+
+    // Buffer kontrolü
+    const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(JSON.stringify(rawBody));
+    
+    const generatedHmac = crypto
+      .createHmac('sha256', SHOPIFY_API_SECRET)
+      .update(bodyBuffer)
+      .digest('base64');
+
+    if (crypto.timingSafeEqual(Buffer.from(generatedHmac), Buffer.from(hmacHeader))) {
+      req.body = JSON.parse(bodyBuffer.toString());
+      return next();
+    } else {
+      console.error('❌ HMAC eşleşmiyor');
+      return res.status(401).send('Unauthorized');
+    }
+  } catch (err) {
+    console.error('❌ Doğrulama hatası:', err);
+    return res.status(500).send('Internal Server Error');
   }
 };
 
