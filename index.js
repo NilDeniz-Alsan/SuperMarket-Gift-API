@@ -91,6 +91,7 @@ app.post('/webhooks/orders/paid', verifyShopifyWebhook, async (req, res) => {
   // Respond to Shopify to acknowledge receipt of the webhook
   res.status(200).send('OK');
 });
+app.use(express.json());
 
 // Start the server
 app.listen(PORT, () => {
