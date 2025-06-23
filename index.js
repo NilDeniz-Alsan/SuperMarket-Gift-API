@@ -6,9 +6,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Your Shopify App credentials from the Partner Dashboard
-const SHOPIFY_API_SECRET = '349d6925724fdf7cf01d8efb3f2e09f8';
-const SHOPIFY_ADMIN_API_TOKEN = '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';
-const SHOPIFY_STORE_DOMAIN = 'zadijh-0k.myshopify.com'; // e.g., my-amazing-store.myshopify.com
+const SHOPIFY_API_SECRET = '';
+const SHOPIFY_ADMIN_API_TOKEN = '';
+const SHOPIFY_STORE_DOMAIN = ''; // e.g., my-amazing-store.myshopify.com
 
 // Middleware to verify the webhook request is from Shopify
 const verifyShopifyWebhook = (req, res, next) => {
