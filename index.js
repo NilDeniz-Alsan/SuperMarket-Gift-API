@@ -4,59 +4,65 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
-const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
-const SHOPIFY_ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_API_TOKEN;
-const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+// ❌ Global olarak express.json() KULLANMIYORUZ — Bu önemli!
 
 // ✅ Webhook doğrulama middleware
 const verifyShopifyWebhook = (req, res, next) => {
   const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
-  const rawBody = req.body;
+  const rawBody = req.body; // buffer olarak gelmeli
 
+  // ✅ HMAC hesapla
   const generatedHmac = crypto
-    .createHmac('sha256', SHOPIFY_API_SECRET)
-    .update(rawBody)
+    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+    .update(rawBody) // Buffer olmalı
     .digest('base64');
 
-  console.log("🧪 HMAC from Shopify:", hmacHeader);
-  console.log("🧪 HMAC you generated:", generatedHmac);
+  console.log('🧪 HMAC from Shopify:', hmacHeader);
+  console.log('🧪 HMAC you generated:', generatedHmac);
 
   try {
-    const isVerified = crypto.timingSafeEqual(
+    const isValid = crypto.timingSafeEqual(
       Buffer.from(generatedHmac, 'utf8'),
       Buffer.from(hmacHeader, 'utf8')
     );
 
-    if (!isVerified) {
-      console.error("❌ Webhook doğrulaması başarısız.");
+    if (!isValid) {
+      console.error('❌ Webhook doğrulaması başarısız.');
       return res.status(401).send('Unauthorized');
     }
 
+    // ✅ JSON'a çevir
     req.body = JSON.parse(rawBody.toString('utf8'));
     return next();
   } catch (err) {
-    console.error("❌ JSON parse veya HMAC karşılaştırma hatası:", err);
-    return res.status(400).send('Invalid HMAC or JSON');
+    console.error('❌ JSON parse veya HMAC karşılaştırma hatası:', err);
+    return res.status(400).send('Bad Request');
   }
 };
 
-// 🚨 Bu route sadece RAW body almalı!
+app.use('/webhooks/orders/paid', (req, res, next) => {
+  console.log('🔍 req.body typeof:', typeof req.body);
+  console.log('🔍 req.body instanceof Buffer:', req.body instanceof Buffer);
+  next();
+});
+
+// ✅ Shopify orders/paid webhook
 app.post(
   '/webhooks/orders/paid',
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json' }), // bu route için özel
   verifyShopifyWebhook,
   async (req, res) => {
     const order = req.body;
     console.log(`🧾 Order #${order.order_number} alındı.`);
 
-    const convertGift = order.note_attributes?.some(
+    const shouldConvert = order.note_attributes?.some(
       attr => attr.name === 'convertToGiftCard' && attr.value === 'true'
     );
 
-    if (convertGift) {
-      console.log('🎁 Hediye kartı oluşturulacak.');
+    if (shouldConvert) {
+      console.log('🎁 Hediye kartı oluşturulacak...');
 
       const giftCardData = {
         gift_card: {
@@ -68,22 +74,25 @@ app.post(
       };
 
       try {
-        const response = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-04/gift_cards.json`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': SHOPIFY_ADMIN_API_TOKEN,
-          },
-          body: JSON.stringify(giftCardData),
-        });
+        const response = await fetch(
+          `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2024-04/gift_cards.json`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_API_TOKEN,
+            },
+            body: JSON.stringify(giftCardData),
+          }
+        );
 
-        const data = await response.json();
+        const result = await response.json();
 
         if (!response.ok) {
-          throw new Error(JSON.stringify(data.errors));
+          throw new Error(JSON.stringify(result.errors));
         }
 
-        console.log(`✅ Gift card oluşturuldu: ${data.gift_card.id}`);
+        console.log(`✅ Gift card oluşturuldu: ${result.gift_card.id}`);
       } catch (err) {
         console.error('❌ Gift card oluşturulamadı:', err);
       }
@@ -95,6 +104,7 @@ app.post(
   }
 );
 
+// 🚀 Sunucu başlat
 app.listen(PORT, () => {
   console.log(`🚀 Sunucu ${PORT} portunda çalışıyor`);
 });
