@@ -1,158 +1,100 @@
-require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-console.log('🛠️  Uygulama başlatılıyor...');
-console.log('🔍 Ortam değişkenleri kontrol ediliyor:');
-console.log(`- SHOPIFY_STORE_DOMAIN: ${process.env.SHOPIFY_STORE_DOMAIN ? '✔️' : '❌'}`);
-console.log(`- SHOPIFY_API_SECRET: ${process.env.SHOPIFY_API_SECRET ? '✔️' : '❌'}`);
-console.log(`- SHOPIFY_ADMIN_API_TOKEN: ${process.env.SHOPIFY_ADMIN_API_TOKEN ? '✔️' : '❌'}`);
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
+const SHOPIFY_ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_API_TOKEN;
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
 
-// Middleware: Sadece webhook için raw body kullan
-app.use('/webhooks', express.raw({ type: 'application/json' }));
-
-// Webhook doğrulama fonksiyonu
+// ✅ Webhook doğrulama middleware
 const verifyShopifyWebhook = (req, res, next) => {
-  console.log('\n🔔 Yeni webhook isteği alındı');
-  console.log('🔒 HMAC doğrulaması başlıyor...');
-  
   const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
   const rawBody = req.body;
-  const shopDomain = req.get('X-Shopify-Shop-Domain');
-  const topic = req.get('X-Shopify-Topic');
 
-  console.log(`🏪 Mağaza: ${shopDomain}`);
-  console.log(`📌 Konu: ${topic}`);
-  console.log(`🔑 Gelen HMAC: ${hmacHeader}`);
+  const generatedHmac = crypto
+    .createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(rawBody)
+    .digest('base64');
 
-  if (!hmacHeader || !rawBody) {
-    console.error('❌ Kritik Hata: HMAC header veya body eksik');
-    return res.status(401).send('Unauthorized');
-  }
+  console.log("🧪 HMAC from Shopify:", hmacHeader);
+  console.log("🧪 HMAC you generated:", generatedHmac);
 
   try {
-    const generatedHmac = crypto
-      .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
-      .update(rawBody)
-      .digest('base64');
+    const isVerified = crypto.timingSafeEqual(
+      Buffer.from(generatedHmac, 'utf8'),
+      Buffer.from(hmacHeader, 'utf8')
+    );
 
-    console.log(`🔐 Oluşturulan HMAC: ${generatedHmac}`);
-
-    if (!crypto.timingSafeEqual(
-      Buffer.from(hmacHeader, 'base64'),
-      Buffer.from(generatedHmac, 'base64')
-    )) {
-      console.error('❌ HMAC uyuşmazlığı! Doğrulama başarısız');
+    if (!isVerified) {
+      console.error("❌ Webhook doğrulaması başarısız.");
       return res.status(401).send('Unauthorized');
     }
 
-    console.log('✅ HMAC doğrulaması başarılı');
-    
-    req.body = JSON.parse(rawBody.toString());
-    req.shopDomain = shopDomain;
-    next();
+    req.body = JSON.parse(rawBody.toString('utf8'));
+    return next();
   } catch (err) {
-    console.error('❌ Doğrulama hatası:', err.message);
-    console.error('Hata detayı:', err.stack);
-    return res.status(400).send('Bad Request');
+    console.error("❌ JSON parse veya HMAC karşılaştırma hatası:", err);
+    return res.status(400).send('Invalid HMAC or JSON');
   }
 };
 
-// Webhook endpoint
-app.post('/webhooks/orders/paid', verifyShopifyWebhook, async (req, res) => {
-  try {
+// 🚨 Bu route sadece RAW body almalı!
+app.post(
+  '/webhooks/orders/paid',
+  express.raw({ type: 'application/json' }),
+  verifyShopifyWebhook,
+  async (req, res) => {
     const order = req.body;
-    console.log('\n🧾 Sipariş Detayları:');
-    console.log(`- Sipariş No: #${order.order_number}`);
-    console.log(`- Toplam Tutar: ${order.total_price} ${order.currency}`);
-    console.log(`- Müşteri ID: ${order.customer?.id || 'Yok'}`);
-    
-    if (order.note_attributes) {
-      console.log('📝 Not Özellikleri:');
-      order.note_attributes.forEach(attr => {
-        console.log(`  - ${attr.name}: ${attr.value}`);
-      });
-    }
+    console.log(`🧾 Order #${order.order_number} alındı.`);
 
-    const shouldConvert = order.note_attributes?.some(
+    const convertGift = order.note_attributes?.some(
       attr => attr.name === 'convertToGiftCard' && attr.value === 'true'
     );
 
-    if (shouldConvert) {
-      console.log('\n🎁 Hediye kartı dönüşümü başlatılıyor...');
-      console.log(`💰 Dönüştürülecek Tutar: ${order.total_price} ${order.currency}`);
+    if (convertGift) {
+      console.log('🎁 Hediye kartı oluşturulacak.');
 
       const giftCardData = {
         gift_card: {
-          note: `Sipariş #${order.order_number} için oluşturuldu`,
+          note: `Order #${order.order_number} üzerinden oluşturuldu.`,
           initial_value: parseFloat(order.total_price),
           currency: order.currency,
           customer_id: order.customer?.id || null,
-        }
+        },
       };
 
-      console.log('📤 Shopify API isteği gönderiliyor...');
-      console.log('API Payload:', JSON.stringify(giftCardData, null, 2));
+      try {
+        const response = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-04/gift_cards.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': SHOPIFY_ADMIN_API_TOKEN,
+          },
+          body: JSON.stringify(giftCardData),
+        });
 
-      const apiUrl = `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2024-04/gift_cards.json`;
-      console.log(`🔗 API URL: ${apiUrl}`);
+        const data = await response.json();
 
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_API_TOKEN,
-        },
-        body: JSON.stringify(giftCardData)
-      });
+        if (!response.ok) {
+          throw new Error(JSON.stringify(data.errors));
+        }
 
-      const data = await response.json();
-      console.log('📥 API Yanıtı:', JSON.stringify(data, null, 2));
-
-      if (!response.ok) {
-        console.error('❌ API Hatası:', data.errors || 'Bilinmeyen hata');
-        throw new Error(data.errors || 'Gift card oluşturulamadı');
+        console.log(`✅ Gift card oluşturuldu: ${data.gift_card.id}`);
+      } catch (err) {
+        console.error('❌ Gift card oluşturulamadı:', err);
       }
-
-      console.log(`✅ Gift card oluşturuldu! ID: ${data.gift_card.id}`);
-      console.log(`🔗 Yönetim Paneli Linki: https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/gift_cards/${data.gift_card.id}`);
     } else {
-      console.log('ℹ️ Gift card dönüşümü gerekmiyor - İşlem atlandı');
+      console.log('ℹ️ Normal sipariş, işlem yapılmadı.');
     }
 
     res.status(200).send('OK');
-  } catch (err) {
-    console.error('\n❌ SİSTEM HATASI:');
-    console.error('Hata Mesajı:', err.message);
-    console.error('Stack Trace:', err.stack);
-    res.status(500).json({ 
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-    });
   }
-});
+);
 
-// Kök endpoint
-app.get('/', (req, res) => {
-  console.log('🌐 Kök endpoint çağrıldı');
-  res.send('Shopify Gift Card Webhook Çalışıyor');
-});
-
-// Hata yakalayıcı
-app.use((err, req, res, next) => {
-  console.error('🔥 Yakalanmamış Hata:', err);
-  res.status(500).send('Internal Server Error');
-});
-
-// Sunucuyu başlat
 app.listen(PORT, () => {
-  console.log(`\n🚀 Sunucu ${PORT} portunda çalışıyor`);
-  console.log(`🏪 Mağaza: ${process.env.SHOPIFY_STORE_DOMAIN}`);
-  console.log('🛡️ HMAC Doğrulama Aktif');
-  console.log('🔔 Webhook URL: /webhooks/orders/paid');
-  console.log('📝 Loglar aktif - Tüm aktiviteler kaydediliyor\n');
+  console.log(`🚀 Sunucu ${PORT} portunda çalışıyor`);
 });
