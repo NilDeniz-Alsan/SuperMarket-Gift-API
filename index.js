@@ -51,4 +51,4 @@ const verifyShopifyWebhook = (req, res, next) => {
 app.post(
   '/webhooks/orders/paid',
   express.raw({ type: 'application/json' }),
-  verifyS
+  verify
