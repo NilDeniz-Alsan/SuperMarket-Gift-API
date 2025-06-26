@@ -24,7 +24,8 @@ const verifyShopifyWebhook = (req, res, next) => {
     .createHmac('sha256', SHOPIFY_API_SECRET)
     .update(rawBody)
     .digest('base64');
-  console.log("HMAC secret:", SHOPIFY_API_SECRET);
+  console.log("🧪 HMAC from Shopify:", hmacHeader);
+  console.log("🧪 HMAC you generated:", generatedHmac);
   
   if (generatedHmac === hmacHeader) {
     try {
