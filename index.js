@@ -21,25 +21,32 @@ const verifyShopifyWebhook = (req, res, next) => {
   }
 
   const generatedHmac = crypto
-    .createHmac('sha256',SHOPIFY_API_SECRET)
+    .createHmac('sha256', SHOPIFY_API_SECRET)
     .update(rawBody)
     .digest('base64');
-  console.log("🧪 HMAC from Shopify:",hmacHeader);
-  console.log("🧪 HMAC you generated:",generatedHmac);
-  
-  if (generatedHmac === hmacHeader) {
-    try {
-      req.body = JSON.parse(rawBody.toString('utf8'));
-      return next();
-    } catch (err) {
-      console.error('❌ JSON parse hatası:', err);
-      return res.status(400).send('Bad JSON');
+
+  console.log("🧪 HMAC from Shopify:", hmacHeader);
+  console.log("🧪 HMAC you generated:", generatedHmac);
+
+  try {
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(generatedHmac, 'utf8'),
+      Buffer.from(hmacHeader, 'utf8')
+    );
+
+    if (!isValid) {
+      console.error('❌ Webhook doğrulaması başarısız.');
+      return res.status(401).send('Unauthorized');
     }
-  } else {
-    console.error('❌ Webhook doğrulaması başarısız.');
-    return res.status(401).send('Unauthorized');
+
+    req.body = JSON.parse(rawBody.toString('utf8'));
+    return next();
+  } catch (err) {
+    console.error('❌ HMAC karşılaştırma hatası veya JSON parse hatası:', err);
+    return res.status(400).send('Bad JSON or Invalid HMAC');
   }
 };
+
 
 // ✅ Shopify webhook rotası: express.raw() ile birlikte
 app.post(
