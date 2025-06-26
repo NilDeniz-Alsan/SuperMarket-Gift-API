@@ -30,8 +30,8 @@ const verifyShopifyWebhook = (req, res, next) => {
 
   try {
     const isValid = crypto.timingSafeEqual(
-      Buffer.from(generatedHmac, 'utf8'),
-      Buffer.from(hmacHeader, 'utf8')
+      Buffer.from(generatedHmac, 'base64'),
+      Buffer.from(hmacHeader, 'base64')
     );
 
     if (!isValid) {
