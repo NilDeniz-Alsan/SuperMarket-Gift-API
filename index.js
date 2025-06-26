@@ -4,7 +4,7 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 // ❌ Burada express.json() veya express.urlencoded() OLMAMALI!
 
@@ -51,4 +51,55 @@ const verifyShopifyWebhook = (req, res, next) => {
 app.post(
   '/webhooks/orders/paid',
   express.raw({ type: 'application/json' }),
-  verify
+  verifyShopifyWebhook,
+  async (req, res) => {
+    const order = req.body;
+    console.log(`🧾 Order #${order.order_number} alındı.`);
+
+    const convertGift = order.note_attributes?.some(
+      attr => attr.name === 'convertToGiftCard' && attr.value === 'true'
+    );
+
+    if (convertGift) {
+      console.log('🎁 Hediye kartı oluşturulacak.');
+
+      const giftCardData = {
+        gift_card: {
+          note: `Order #${order.order_number} üzerinden oluşturuldu.`,
+          initial_value: parseFloat(order.total_price),
+          currency: order.currency,
+          customer_id: order.customer?.id || null,
+        },
+      };
+
+      try {
+        const response = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-04/gift_cards.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': SHOPIFY_ADMIN_API_TOKEN,
+          },
+          body: JSON.stringify(giftCardData),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(JSON.stringify(data.errors));
+        }
+
+        console.log(`✅ Gift card oluşturuldu: ${data.gift_card.id}`);
+      } catch (err) {
+        console.error('❌ Gift card oluşturulamadı:', err);
+      }
+    } else {
+      console.log('ℹ️ Normal sipariş, işlem yapılmadı.');
+    }
+
+    res.status(200).send('OK');
+  }
+);
+
+app.listen(PORT, () => {
+  console.log(`🚀 Sunucu ${PORT} portunda çalışıyor`);
+});
