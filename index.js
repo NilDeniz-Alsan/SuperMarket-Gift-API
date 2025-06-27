@@ -51,6 +51,7 @@ const verifyShopifyWebhook = (req, res, next) => {
 app.post('/webhooks/orders/paid', verifyShopifyWebhook, async (req, res) => {
   const order = req.body;
   console.log(`📦 Sipariş alındı: Order #${order.order_number}, Toplam: ${order.total_price} ${order.currency}`);
+  console.log("📝 note_attributes:", order.note_attributes);
 
   const convertGift = order.note_attributes?.some(
     attr => attr.name === 'convertToGiftCard' && attr.value === 'true'
@@ -58,6 +59,7 @@ app.post('/webhooks/orders/paid', verifyShopifyWebhook, async (req, res) => {
 
   if (convertGift) {
     console.log('🎁 Hediye kartı oluşturulacak.');
+    
 
     let remaining = parseFloat(order.total_price);
     const createdGiftCards = [];
